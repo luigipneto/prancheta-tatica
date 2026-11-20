@@ -74,6 +74,8 @@ input[type=checkbox] { accent-color: var(--accent); }
 .kbd { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; font-size: 11px; background: rgba(255,255,255,.08); }
 .team-tabs button.on .kbd { background: rgba(0,0,0,.15); }
 
+.phase-tabs button.on { background: #e8edf6; color: #0b0f17; }
+.pitch.anim .token { transition: left .5s cubic-bezier(.4,0,.2,1), top .5s cubic-bezier(.4,0,.2,1); }
 .pitch-wrap { width: 100%; max-width: 560px; }
 .pitch {
   position: relative; width: 100%; aspect-ratio: 72 / 100; border-radius: 16px; overflow: hidden; user-select: none;

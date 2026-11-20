@@ -137,6 +137,33 @@ const SEED = [
   ['Fabrizio Peralta', 'VOL'], ['Matheus Pereira', 'MEI'], ['Bruno Rodrigues', 'MEI'], ['Murilo', 'ZAG'],
 ];
 
+/* ---------- fases: padrão / atacando / defendendo (mesmos jogadores, posições diferentes) ---------- */
+const PHASES = [['p', 'Padrão'], ['a', 'Atacando'], ['d', 'Defendendo']];
+const phaseLabel = ph => (PHASES.find(x => x[0] === ph) || PHASES[0])[1];
+// Posição sugerida para atacando/defendendo, calculada a partir do padrão até o usuário arrastar
+function derivedPos(s, ph) {
+  const { x, y } = s;
+  if (ph === 'p') return { x, y };
+  if (s.code === 'GOL') return { x, y: ph === 'a' ? 86 : y };
+  if (ph === 'a') {
+    let ny = y * 0.8 - 4, nx = x;
+    if (s.code === 'LD' || s.code === 'LE') { ny -= 12; nx = 50 + (x - 50) * 1.08; }
+    return { x: +clamp(nx, 5, 95).toFixed(2), y: +clamp(ny, 8, 95).toFixed(2) };
+  }
+  // bloco compacto: atacantes ~40, zagueiros ~80
+  return { x: +(50 + (x - 50) * 0.85).toFixed(2), y: +clamp(40 + (y - 17) * (40 / 61), 8, 84).toFixed(2) };
+}
+function posOf(s, ph = S.phase) {
+  if (ph === 'a' && s.atk) return s.atk;
+  if (ph === 'd' && s.def) return s.def;
+  return derivedPos(s, ph);
+}
+function setPos(s, ph, x, y) {
+  if (ph === 'a') s.atk = { x, y };
+  else if (ph === 'd') s.def = { x, y };
+  else { s.x = x; s.y = y; }
+}
+
 function slotsFor(f) { return FORMATIONS[f].map(([code, x, y]) => ({ code, x, y, playerId: null })); }
 function newTeam(f = '4-3-3') { return { formation: f, slots: slotsFor(f) }; }
 function newLineup(name) { return { id: uid(), name, teams: [newTeam(), newTeam(), newTeam()] }; }
@@ -148,7 +175,7 @@ function defaultState() {
   const l = newLineup('Minha escalação');
   return {
     version: 1, players: SEED.map(([name, pos]) => newPlayer({ name, pos })), clubs: {},
-    lineups: [l], currentLineupId: l.id, teamIdx: 0, view: 'lineup', settings: { ...DEFAULT_SETTINGS },
+    lineups: [l], currentLineupId: l.id, teamIdx: 0, phase: 'p', view: 'lineup', settings: { ...DEFAULT_SETTINGS },
   };
 }
 function sanitize(s) {
@@ -158,6 +185,7 @@ function sanitize(s) {
   s.players = s.players.map(p => newPlayer({ ...p, sec: Array.isArray(p.sec) ? p.sec : [] }));
   if (!s.lineups.find(l => l.id === s.currentLineupId)) s.currentLineupId = s.lineups[0].id;
   s.teamIdx = clamp(+s.teamIdx || 0, 0, 2);
+  s.phase = ['p', 'a', 'd'].includes(s.phase) ? s.phase : 'p';
   s.view = s.view === 'squad' ? 'squad' : 'lineup';
   return s;
 }
@@ -257,7 +285,8 @@ function filledCount(ti) { return curLineup().teams[ti].slots.filter(s => s.play
 
 function tokenHTML(s, i) {
   const p = playerById(s.playerId);
-  const style = `left:${s.x}%;top:${s.y}%`;
+  const pos = posOf(s);
+  const style = `left:${pos.x}%;top:${pos.y}%`;
   if (!p) return `<button class="token empty" data-idx="${i}" style="${style}" aria-label="Escolher ${POS[s.code].nome}"><span class="disc">+</span><span class="tname">${s.code}</span></button>`;
   return `<button class="token${p.external ? ' ext' : ''}" data-idx="${i}" style="${style}" aria-label="${esc(p.name)}, ${POS[s.code].nome}${p.external ? ', possível contratação' : ''}">${avatarHTML(p, 'disc')}` +
     `${S.settings.showNames ? `<span class="tname">${esc(p.name)}</span>` : ''}</button>`;
@@ -275,6 +304,7 @@ function renderLineup() {
   <section class="lineup-layout">
     <div class="pitch-col">
       <div class="team-tabs" role="tablist">${TEAM_LABELS.map((n, i) => `<button role="tab" data-team="${i}" class="${i === S.teamIdx ? 'on' : ''}" aria-selected="${i === S.teamIdx}"><span class="kbd">${i + 1}</span>${n}<em>${filledCount(i)}/11</em></button>`).join('')}</div>
+      <div class="seg phase-tabs" role="tablist" aria-label="Fase">${PHASES.map(([k, n]) => `<button role="tab" data-phase="${k}" class="${S.phase === k ? 'on' : ''}" title="Atalho: tecla ${n[0]}">${n}</button>`).join('')}</div>
       <div class="pitch-wrap"><div class="pitch" id="pitch">${pitchInner()}</div></div>
     </div>
     <aside class="side">
@@ -322,10 +352,11 @@ document.addEventListener('pointerdown', e => {
   const move = ev => {
     if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
     moved = true;
-    slot.x = +clamp((ev.clientX - rect.left) / rect.width * 100, 4, 96).toFixed(2);
-    slot.y = +clamp((ev.clientY - rect.top) / rect.height * 100, 4, 96).toFixed(2);
-    tok.style.left = slot.x + '%';
-    tok.style.top = slot.y + '%';
+    const x = +clamp((ev.clientX - rect.left) / rect.width * 100, 4, 96).toFixed(2);
+    const y = +clamp((ev.clientY - rect.top) / rect.height * 100, 4, 96).toFixed(2);
+    setPos(slot, S.phase, x, y);
+    tok.style.left = x + '%';
+    tok.style.top = y + '%';
   };
   const end = ev => {
     tok.removeEventListener('pointermove', move);
@@ -860,14 +891,14 @@ async function exportPNG() {
   ctx.fillStyle = st.shirt; ctx.fillRect(60, 52, 10, 74);
   ctx.fillStyle = '#fff'; ctx.font = `800 54px ${FONT}`; ctx.fillText(fitText(ctx, st.title || l.name, 900), 88, 100);
   ctx.fillStyle = 'rgba(255,255,255,.62)'; ctx.font = `600 27px ${FONT}`;
-  ctx.fillText(fitText(ctx, `${TEAM_LABELS[S.teamIdx]} · ${t.formation} · ${l.name}`, 900), 90, 140);
+  ctx.fillText(fitText(ctx, `${TEAM_LABELS[S.teamIdx]} · ${S.phase === 'p' ? '' : phaseLabel(S.phase) + ' · '}${t.formation} · ${l.name}`, 900), 90, 140);
   const PH = 1130, PW = PH * 0.72, PX = (W - PW) / 2, PY = 178;
   drawPitch(ctx, PX, PY, PW, PH);
   const imgs = await Promise.all(t.slots.map(s => {
     const p = playerById(s.playerId);
     return p && p.photo && st.display === 'photo' ? loadImg(p.photo).catch(() => null) : null;
   }));
-  t.slots.forEach((s, i) => drawToken(ctx, PX + s.x / 100 * PW, PY + s.y / 100 * PH, s, playerById(s.playerId), imgs[i]));
+  t.slots.forEach((s, i) => { const q = posOf(s); drawToken(ctx, PX + q.x / 100 * PW, PY + q.y / 100 * PH, s, playerById(s.playerId), imgs[i]); });
   if (hasExternal(t)) { // legenda
     ctx.fillStyle = EXT_COLOR; ctx.beginPath(); ctx.arc(W - 60 - 8, 132, 9, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.font = `600 24px ${FONT}`; ctx.textAlign = 'right';
@@ -910,6 +941,7 @@ document.addEventListener('click', e => {
   let x;
   if ((x = el('[data-view]'))) { S.view = x.dataset.view; save(); render(); return; }
   if ((x = el('[data-team]'))) { S.teamIdx = +x.dataset.team; save(); renderLineup(); return; }
+  if ((x = el('[data-phase]'))) { setPhase(x.dataset.phase); return; }
   if ((x = el('[data-display]'))) { S.settings.display = x.dataset.display; save(); renderLineup(); return; }
   if ((x = el('[data-pick]'))) { openPicker(+x.dataset.pick); return; }
   if ((x = el('[data-choose]'))) {
@@ -960,8 +992,12 @@ document.addEventListener('click', e => {
     case 'backup-import': pickFile('.json,application/json', importBackup); break;
     case 'reset-pos': {
       const team = curTeam(), base = slotsFor(team.formation);
-      team.slots.forEach((s, i) => { s.x = base[i].x; s.y = base[i].y; });
-      save(); renderLineup(); break;
+      team.slots.forEach((s, i) => {
+        if (S.phase === 'a') delete s.atk;
+        else if (S.phase === 'd') delete s.def;
+        else { s.x = base[i].x; s.y = base[i].y; }
+      });
+      save(); setPhase(S.phase); toast(`Posições de "${phaseLabel(S.phase)}" voltaram ao padrão da formação.`); break;
     }
     case 'clear-team':
       if (!confirm(`Tirar todos os jogadores do ${TEAM_LABELS[S.teamIdx].toLowerCase()}?`)) return;
@@ -1014,10 +1050,29 @@ document.addEventListener('keydown', e => {
     return;
   }
   const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
-  if (!typing && !modalStack.length && S.view !== 'squad' && ['1', '2', '3'].includes(e.key)) {
-    S.teamIdx = +e.key - 1; save(); renderLineup();
-  }
+  if (typing || modalStack.length || S.view === 'squad' || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (['1', '2', '3'].includes(e.key)) { S.teamIdx = +e.key - 1; save(); renderLineup(); }
+  const ph = { p: 'p', a: 'a', d: 'd' }[e.key.toLowerCase()];
+  if (ph) setPhase(ph);
 });
+
+// troca de fase com animação: os jogadores deslizam até as novas posições
+function setPhase(ph) {
+  S.phase = ph;
+  save();
+  const pitch = $('#pitch');
+  if (!pitch) return;
+  document.querySelectorAll('[data-phase]').forEach(b => b.classList.toggle('on', b.dataset.phase === ph));
+  pitch.classList.add('anim');
+  const slots = curTeam().slots;
+  pitch.querySelectorAll('.token').forEach(tok => {
+    const q = posOf(slots[+tok.dataset.idx]);
+    tok.style.left = q.x + '%';
+    tok.style.top = q.y + '%';
+  });
+  clearTimeout(setPhase.t);
+  setPhase.t = setTimeout(() => pitch.classList.remove('anim'), 550);
+}
 
 loadPublished();
 render();
